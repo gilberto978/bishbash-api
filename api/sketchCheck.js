@@ -10,45 +10,47 @@ export default async function handler(req, res) {
   if (!query) return res.status(400).json({ error: "Missing query term" });
 
   try {
-    // 🔹 Query Bing for scam/fraud signals
-    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:scambook.com`;
+    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:bbb.org OR site:scambook.com`;
     const resp = await fetch(
-      `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(q)}&count=10`,
+      `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(q)}&count=8`,
       { headers: { "Ocp-Apim-Subscription-Key": process.env.BING_API_KEY } }
     );
-    if (!resp.ok) throw new Error("Bing fetch failed");
     const data = await resp.json();
 
-    const results = data.webPages?.value || [];
+    if (!data.webPages?.value) {
+      return res.status(200).json({
+        query,
+        verdict: "No strong signals found",
+        red_flags: [],
+        reviews: [],
+        sources: [],
+        debug: data   // <- will help debug key issues
+      });
+    }
+
+    const results = data.webPages.value;
     const red_flags = [];
     const reviews = [];
     const sources = [];
 
     results.forEach(r => {
-      const title = r.name || "";
-      const snippet = r.snippet || "";
-      const url = r.url || "";
-      sources.push({ title, url });
-      const text = `${title} ${snippet}`.toLowerCase();
-
+      const text = `${r.name} ${r.snippet}`.toLowerCase();
+      sources.push({ title: r.name, url: r.url });
       if (text.includes("scam") || text.includes("fraud") || text.includes("complaint")) {
-        red_flags.push(snippet || title);
+        red_flags.push(r.snippet);
       } else {
-        reviews.push(snippet || title);
+        reviews.push(r.snippet);
       }
     });
 
-    const out = {
+    res.status(200).json({
       query,
       verdict: red_flags.length > 0 ? "⚠️ Possible Scam" : "🟢 No Major Red Flags Found",
       red_flags: [...new Set(red_flags)],
       reviews: [...new Set(reviews)],
-      sources: sources.slice(0, 10)
-    };
-
-    res.status(200).json(out);
+      sources
+    });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Error fetching results" });
+    res.status(500).json({ error: "Error fetching results", detail: e.message });
   }
 }
