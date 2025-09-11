@@ -1,6 +1,14 @@
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");  // allow all domains
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end(); // quick reply to preflight
+  }
+
   const broker = req.query.broker;
   if (!broker) {
     return res.status(400).json({ error: "Missing broker name" });
@@ -22,8 +30,7 @@ export default async function handler(req, res) {
 
     let verdict = "GREEN";
     let color = "green";
-    const snippet =
-      data.webPages?.value?.[0]?.snippet || "No major issues found.";
+    const snippet = data.webPages?.value?.[0]?.snippet || "No major issues found.";
     if (/scam|ban|warning|unlicensed/i.test(snippet)) {
       verdict = "RED";
       color = "red";
