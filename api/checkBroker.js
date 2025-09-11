@@ -1,7 +1,6 @@
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
-  // CORS for Uncody
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -11,18 +10,18 @@ export default async function handler(req, res) {
   if (!broker) return res.status(400).json({ error: "Missing broker name" });
 
   try {
-    const q = `${broker} broker reviews regulation Trustpilot license warning unauthorized banned "license revoked"`;
+    const q = `${broker} broker reviews regulation Trustpilot license warning complaints fraud unauthorized banned`;
     const response = await fetch(
       `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(q)}`,
       { headers: { "Ocp-Apim-Subscription-Key": process.env.BING_API_KEY } }
     );
     const data = await response.json();
-    const results = data.webPages?.value?.slice(0, 8) || [];
+    const results = data.webPages?.value?.slice(0, 15) || [];
 
-    // Keyword buckets
-    const regulationKW = ["fca","cysec","asic","cftc","nfa","fsca","bafin","finma","mas","license","regulated","authorised","authorized"];
-    const reviewKW    = ["trustpilot","review","rating","forexbrokers.com","daytrading","traders union","forex peace army","reddit"];
-    const redKW       = ["scam","fraud","warning","unauthorized","unauthorised","blacklist","revoked","not authorized","not authorised","unlicensed","ban","banned"];
+    // Expanded keyword buckets
+    const regulationKW = ["fca","cysec","asic","cftc","nfa","fsca","bafin","finma","mas","license","regulated","authorised","authorized","regulator","compliance"];
+    const reviewKW    = ["trustpilot","review","rating","forexbrokers","daytrading","traders union","forex peace army","reddit","feedback"];
+    const redKW       = ["scam","fraud","complaints","warning","unauthorized","unauthorised","blacklist","revoked","unlicensed","ban","banned","not regulated"];
 
     const regulation = [];
     const reviews = [];
@@ -38,7 +37,7 @@ export default async function handler(req, res) {
     }
 
     // Dedup + trim
-    const dedup = arr => Array.from(new Set(arr)).slice(0, 6);
+    const dedup = arr => Array.from(new Set(arr)).slice(0, 8);
     const out = {
       name: broker,
       regulation: dedup(regulation),
@@ -49,9 +48,15 @@ export default async function handler(req, res) {
       color: "green"
     };
 
-    // Simple verdict logic
-    if (out.red_flags.length > 0) { out.verdict = "HIGH RISK"; out.color = "red"; }
-    else if (out.regulation.length === 0 && out.reviews.length === 0) { out.verdict = "CAUTION"; out.color = "amber"; }
+    // Verdict logic (brutally honest)
+    if (out.red_flags.length > 0) {
+      out.verdict = "HIGH RISK";
+      out.color = "red";
+    } else if (out.regulation.length === 0 && out.reviews.length === 0) {
+      out.verdict = "CAUTION";
+      out.color = "amber";
+      out.reviews.push("No regulator or review evidence in top 15 results. Verify directly with official registries (FCA, CySEC, ASIC). Treat with caution.");
+    }
 
     return res.status(200).json(out);
   } catch (e) {
