@@ -57,7 +57,21 @@ export default async function handler(req, res) {
     });
 
     const aiData = await openAiResp.json();
-    const aiMessage = aiData.choices?.[0]?.message?.content || "No AI analysis available.";
+console.log("AI debug:", aiData); // still goes to Vercel logs
+
+let aiMessage;
+if (aiData.choices && aiData.choices[0] && aiData.choices[0].message) {
+  aiMessage = aiData.choices[0].message.content;
+} else {
+  // Instead of hiding the reason, expose it in API response
+  return res.status(200).json({
+    query,
+    verdict: "⚠️ Debug Mode",
+    summary: JSON.stringify(aiData, null, 2),
+    sources
+  });
+}
+
 
     // Step 4: Verdict extraction
     let verdict = "⚠️ Caution";
