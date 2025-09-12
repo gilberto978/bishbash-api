@@ -9,29 +9,18 @@ export default async function handler(req, res) {
   const query = (req.query.query || "").trim();
   if (!query) return res.status(400).json({ error: "Missing query term" });
 
-  // Helper: call Bing API with given endpoint
-  async function fetchBing(endpoint) {
-    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:bbb.org OR site:scambook.com`;
-    const url = `https://api.bing.microsoft.com/v7.0/${endpoint}?q=${encodeURIComponent(q)}&count=8`;
-    const resp = await fetch(url, {
-      headers: { "Ocp-Apim-Subscription-Key": process.env.BING_API_KEY }
-    });
-    return resp;
-  }
-
   try {
-    // First try /search
-    let resp = await fetchBing("search");
-    if (resp.status === 401 || resp.status === 403) {
-      // Fallback to /news/search
-      resp = await fetchBing("news/search");
-    }
+    // Use SerpAPI with Bing engine
+    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:bbb.org`;
+    const url = `https://serpapi.com/search.json?engine=bing&q=${encodeURIComponent(q)}&api_key=${process.env.SERPAPI_KEY}`;
 
+    const resp = await fetch(url);
     const data = await resp.json();
-    if (!data.webPages?.value && !data.value) {
+
+    if (!data.organic_results) {
       return res.status(200).json({
         query,
-        verdict: "No strong signals found",
+        verdict: "No results found",
         red_flags: [],
         reviews: [],
         sources: [],
@@ -39,17 +28,16 @@ export default async function handler(req, res) {
       });
     }
 
-    // Normalize results (webPages.value vs news.value)
-    const results = data.webPages?.value || data.value || [];
+    const results = data.organic_results;
     const red_flags = [];
     const reviews = [];
     const sources = [];
 
     results.forEach(r => {
-      const title = r.name || r.title || "";
-      const snippet = r.snippet || r.description || "";
-      const url = r.url || r.webSearchUrl || "";
-      sources.push({ title, url });
+      const title = r.title || "";
+      const snippet = r.snippet || "";
+      const link = r.link || "";
+      sources.push({ title, url: link });
       const text = `${title} ${snippet}`.toLowerCase();
       if (text.includes("scam") || text.includes("fraud") || text.includes("complaint")) {
         red_flags.push(snippet || title);
