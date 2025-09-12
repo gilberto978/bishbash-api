@@ -1,8 +1,7 @@
 // /api/sketchCheck.js
 
-import blacklist from "./regulator_blacklist.json" assert { type: "json" };
-import trusted from "./trusted_brokers.json" assert { type: "json" };
-
+import blacklist from "./regulator_blacklist.js";
+import trusted from "./trusted_brokers.js";
 
 export default async function handler(req, res) {
   try {
