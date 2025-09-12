@@ -1,5 +1,5 @@
-{
-  "domains": [
+export default {
+  domains: [
     "trustmarkets.org",
     "binfxtrade.com",
     "cryptofxtrade.net",
@@ -21,4 +21,4 @@
     "gmo-trading.com",
     "xtraderfx.com"
   ]
-}
+};
