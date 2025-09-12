@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
-import blacklist from "./regulator_blacklist.json";
-import trusted from "./trusted_brokers.json";
+const blacklist = require("./regulator_blacklist.json");
+const trusted = require("./trusted_brokers.json");
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
