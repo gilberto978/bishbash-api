@@ -10,51 +10,68 @@ export default async function handler(req, res) {
   if (!query) return res.status(400).json({ error: "Missing query term" });
 
   try {
-    // Use SerpAPI with Bing engine
-    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:bbb.org`;
-    const url = `https://serpapi.com/search.json?engine=bing&q=${encodeURIComponent(q)}&api_key=${process.env.SERPAPI_KEY}`;
+    // Step 1: Fetch results from SerpAPI (Bing engine)
+    const q = `${query} scam fraud complaints reviews site:trustpilot.com OR site:reddit.com OR site:bbb.org OR site:forexpeacearmy.com`;
+    const serpUrl = `https://serpapi.com/search.json?engine=bing&q=${encodeURIComponent(q)}&api_key=${process.env.SERPAPI_KEY}`;
+    const serpResp = await fetch(serpUrl);
+    const serpData = await serpResp.json();
 
-    const resp = await fetch(url);
-    const data = await resp.json();
-
-    if (!data.organic_results) {
+    if (!serpData.organic_results) {
       return res.status(200).json({
         query,
         verdict: "No results found",
-        red_flags: [],
-        reviews: [],
-        sources: [],
-        debug: data
+        summary: "No meaningful evidence detected. Please verify with regulators directly.",
+        sources: []
       });
     }
 
-    const results = data.organic_results;
-    const red_flags = [];
-    const reviews = [];
-    const sources = [];
+    // Step 2: Trim to top 5 snippets for cost efficiency
+    const snippets = serpData.organic_results.slice(0, 5).map(r => r.snippet).join(" ");
+    const sources = serpData.organic_results.slice(0, 10).map(r => ({
+      title: r.title,
+      url: r.link
+    }));
 
-    results.forEach(r => {
-      const title = r.title || "";
-      const snippet = r.snippet || "";
-      const link = r.link || "";
-      sources.push({ title, url: link });
-      const text = `${title} ${snippet}`.toLowerCase();
-      if (text.includes("scam") || text.includes("fraud") || text.includes("complaint")) {
-        red_flags.push(snippet || title);
-      } else {
-        reviews.push(snippet || title);
-      }
+    // Step 3: Call OpenAI to classify & summarize
+    const openAiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an independent scam analysis assistant. Read snippets, weigh evidence, and classify company risk."
+          },
+          {
+            role: "user",
+            content: `Company: ${query}\n\nEvidence:\n${snippets}\n\nClassify the company as one of: Trusted, Caution, High Risk.\nGive exactly 3 short bullet reasons (≤10 words each).`
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.3
+      })
     });
+
+    const aiData = await openAiResp.json();
+    const aiMessage = aiData.choices?.[0]?.message?.content || "No AI analysis available.";
+
+    // Step 4: Verdict extraction
+    let verdict = "⚠️ Caution";
+    if (/high risk/i.test(aiMessage)) verdict = "🚨 High Risk";
+    else if (/trusted/i.test(aiMessage)) verdict = "✅ Trusted";
 
     res.status(200).json({
       query,
-      verdict: red_flags.length > 0 ? "⚠️ Possible Scam" : "🟢 No Major Red Flags Found",
-      red_flags: [...new Set(red_flags)],
-      reviews: [...new Set(reviews)],
-      sources: sources.slice(0, 10)
+      verdict,
+      summary: aiMessage,
+      sources
     });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "Error fetching results", detail: e.message });
+    res.status(500).json({ error: "Error fetching or summarizing results", detail: e.message });
   }
 }
