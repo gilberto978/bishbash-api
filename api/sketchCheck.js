@@ -1,5 +1,6 @@
 import trustedDealers from "./trusted_watch_dealers.js";
 import scamBlacklist from "./scammer_blacklist.js";
+import whois from "whois-json"; // remember: npm install whois-json
 
 export default async function handler(req, res) {
   try {
@@ -12,16 +13,10 @@ export default async function handler(req, res) {
     // Normalize input
     const q = query.toLowerCase().trim().replace(/^www\./, "");
 
-    // Debug logs (check in Vercel logs)
-    console.log("Trusted dealers loaded:", trustedDealers.map(d => d.domain));
-    console.log("Query received:", q);
-
     // 1. Trusted check
-    const trustedHit = Array.isArray(trustedDealers)
-      ? trustedDealers.find(
-          (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
-        )
-      : null;
+    const trustedHit = trustedDealers.find(
+      (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
+    );
 
     if (trustedHit) {
       return res.status(200).json({
@@ -39,11 +34,9 @@ export default async function handler(req, res) {
     }
 
     // 2. Blacklist check
-    const scamHit = Array.isArray(scamBlacklist)
-      ? scamBlacklist.find(
-          (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
-        )
-      : null;
+    const scamHit = scamBlacklist.find(
+      (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
+    );
 
     if (scamHit) {
       return res.status(200).json({
@@ -64,7 +57,34 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Suspicious fallback → Reddit fetch
+    // 3. Suspicious fallback → WHOIS + Reddit
+    let whoisInfo = null;
+    let domainAgeReason = "ℹ️ Domain age unavailable"; // fallback by default
+
+    try {
+      const whoisData = await whois(q, { timeout: 5000 }); // 5s timeout
+      if (whoisData && whoisData.creationDate) {
+        const created = new Date(whoisData.creationDate);
+        const now = new Date();
+        const ageMs = now - created;
+        const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+
+        if (ageDays < 90) {
+          domainAgeReason = `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`;
+        } else {
+          domainAgeReason = `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
+        }
+
+        whoisInfo = {
+          created: created.toISOString(),
+          registrar: whoisData.registrar || "Unknown",
+        };
+      }
+    } catch (err) {
+      console.error("WHOIS lookup failed:", err);
+    }
+
+    // Reddit posts
     let redditPosts = [];
     try {
       const redditRes = await fetch(
@@ -88,15 +108,18 @@ export default async function handler(req, res) {
       console.error("Reddit fetch error:", err);
     }
 
+    // Final suspicious verdict
     return res.status(200).json({
       query: q,
       verdict: "suspicious",
       reasons: [
         "⚠️ Not in trusted dealer index",
         "⚠️ Not flagged in blacklist",
-        "Further analysis required: domain age, pricing anomalies, reputation footprint",
+        domainAgeReason,
+        "Further analysis required: pricing anomalies, reputation footprint",
       ],
       sources: redditPosts,
+      whois: whoisInfo,
       lastChecked: new Date().toISOString(),
     });
   } catch (err) {
