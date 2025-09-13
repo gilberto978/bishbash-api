@@ -1,6 +1,5 @@
 import trustedDealers from "./trusted_watch_dealers.js";
 import scamBlacklist from "./scammer_blacklist.js";
-import whois from "whois-json"; // ensure this is in package.json
 
 export default async function handler(req, res) {
   try {
@@ -32,7 +31,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. Blacklist check
+    // 2. Scam check
     const scamHit = scamBlacklist.find(
       (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
     );
@@ -56,30 +55,37 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Suspicious fallback → WHOIS + Reddit
+    // 3. Suspicious fallback → WHOIS API + Reddit
     let whoisInfo = null;
     let domainAgeReason = "ℹ️ Domain age unavailable";
 
     try {
-      const whoisData = await whois(q, { timeout: 5000 });
-      if (whoisData && whoisData.creationDate) {
-        const created = new Date(whoisData.creationDate);
-        const now = new Date();
-        const ageDays = Math.floor((now - created) / (1000 * 60 * 60 * 24));
+      const whoisRes = await fetch(
+        `https://api.api-ninjas.com/v1/whois?domain=${q}`,
+        { headers: { "X-Api-Key": process.env.NINJAS_API_KEY } }
+      );
 
-        if (ageDays < 90) {
-          domainAgeReason = `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`;
-        } else {
-          domainAgeReason = `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
+      if (whoisRes.ok) {
+        const whoisData = await whoisRes.json();
+        if (whoisData && whoisData.creation_date) {
+          const created = new Date(whoisData.creation_date);
+          const now = new Date();
+          const ageDays = Math.floor((now - created) / (1000 * 60 * 60 * 24));
+
+          if (ageDays < 90) {
+            domainAgeReason = `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`;
+          } else {
+            domainAgeReason = `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
+          }
+
+          whoisInfo = {
+            created: created.toISOString(),
+            registrar: whoisData.registrar || "Unknown",
+          };
         }
-
-        whoisInfo = {
-          created: created.toISOString(),
-          registrar: whoisData.registrar || "Unknown",
-        };
       }
     } catch (err) {
-      console.error("WHOIS lookup failed:", err);
+      console.error("WHOIS API error:", err);
     }
 
     // Reddit fetch
@@ -102,12 +108,12 @@ export default async function handler(req, res) {
       console.error("Reddit fetch error:", err);
     }
 
-    // Ensure sources never empty
+    // Sources fallback
     const sources = redditPosts.length > 0
       ? redditPosts
       : [{ label: "No Reddit discussions found", url: "#", date: new Date().toISOString() }];
 
-    // Trust signal
+    // Trust signal meter
     let trustSignal = "🤔 Neutral — no strong community signals found.";
     if (domainAgeReason?.includes("very recent")) {
       trustSignal = "🚨 High Risk — brand new domain with no reputation.";
