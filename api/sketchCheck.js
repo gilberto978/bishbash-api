@@ -21,7 +21,7 @@ export default function handler(req, res) {
         verdict: "trusted",
         reasons: [
           `Listed in trusted_watch_dealers.js as ${trustedHit.name}`,
-          "Active dealer with reputation footprint",
+          "Active dealer with long-standing reputation footprint",
         ],
         sources: [
           { label: trustedHit.name, url: `https://${trustedHit.domain}` },
@@ -53,14 +53,14 @@ export default function handler(req, res) {
       });
     }
 
-    // 3. AI / Suspicious fallback
+    // 3. Suspicious fallback (AI analysis placeholder for now)
     return res.status(200).json({
       query: q,
       verdict: "suspicious",
       reasons: [
         "Not found in trusted dealers",
         "Not listed in blacklist",
-        "Further AI analysis required (WHOIS age, pricing, reputation)",
+        "Further AI analysis required (domain age, pricing anomalies, reputation footprint)",
       ],
       sources: [],
       lastChecked: new Date().toISOString(),
