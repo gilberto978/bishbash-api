@@ -1,7 +1,7 @@
-import trustedDealers from "../data/trusted_watch_dealers.js";
-import scamBlacklist from "../data/scammer_blacklist.js";
+const trustedDealers = require("../data/trusted_watch_dealers");
+const scamBlacklist = require("../data/scammer_blacklist");
 
-export default function handler(req, res) {
+module.exports = (req, res) => {
   try {
     const { query } = req.query;
 
@@ -53,7 +53,7 @@ export default function handler(req, res) {
       });
     }
 
-    // 3. Suspicious fallback (AI analysis placeholder for now)
+    // 3. Suspicious fallback
     return res.status(200).json({
       query: q,
       verdict: "suspicious",
@@ -69,4 +69,4 @@ export default function handler(req, res) {
     console.error("Handler error:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
-}
+};
