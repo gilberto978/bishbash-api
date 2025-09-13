@@ -1,5 +1,8 @@
-import trustedDealers from "../data/datatrusted_watch_dealers.js";
-import scamBlacklist from "../data/scammer_blacklist.js";
+import * as dealersFile from "../data/datatrusted_watch_dealers.js";
+import * as blacklistFile from "../data/scammer_blacklist.js";
+
+const trustedDealers = dealersFile.default;
+const scamBlacklist = blacklistFile.default;
 
 export default function handler(req, res) {
   try {
@@ -12,9 +15,10 @@ export default function handler(req, res) {
     const q = query.toLowerCase().trim();
 
     // 1. Trusted check
-    const trustedHit = trustedDealers.find(
-      (d) => d.domain.toLowerCase() === q
-    );
+    const trustedHit = Array.isArray(trustedDealers)
+      ? trustedDealers.find((d) => d.domain.toLowerCase() === q)
+      : null;
+
     if (trustedHit) {
       return res.status(200).json({
         query: q,
@@ -31,9 +35,10 @@ export default function handler(req, res) {
     }
 
     // 2. Blacklist check
-    const scamHit = scamBlacklist.find(
-      (d) => d.domain.toLowerCase() === q
-    );
+    const scamHit = Array.isArray(scamBlacklist)
+      ? scamBlacklist.find((d) => d.domain.toLowerCase() === q)
+      : null;
+
     if (scamHit) {
       return res.status(200).json({
         query: q,
