@@ -9,6 +9,7 @@ export default async function handler(req, res) {
 
     let whoisInfo = null;
     let domainAgeReason = "ℹ️ Domain age unavailable";
+    let debug = {};
 
     try {
       const whoisRes = await fetch(
@@ -16,9 +17,11 @@ export default async function handler(req, res) {
         { headers: { "X-Api-Key": process.env.NINJAS_API_KEY } }
       );
 
-      console.log("WHOIS status:", whoisRes.status);
+      debug.status = whoisRes.status;
+      debug.apiKeyLoaded = !!process.env.NINJAS_API_KEY;
+
       const whoisData = await whoisRes.json();
-      console.log("WHOIS response:", whoisData);
+      debug.response = whoisData;
 
       if (whoisData && (whoisData.creation_date || whoisData.creationDate)) {
         const created = new Date(
@@ -39,13 +42,14 @@ export default async function handler(req, res) {
         };
       }
     } catch (err) {
-      console.error("WHOIS API error:", err);
+      debug.error = err.message;
     }
 
     return res.status(200).json({
       query: q,
       domainAgeReason,
       whois: whoisInfo,
+      debug,
       lastChecked: new Date().toISOString(),
     });
   } catch (err) {
