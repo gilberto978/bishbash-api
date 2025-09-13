@@ -111,7 +111,11 @@ export default async function handler(req, res) {
     // Sources fallback
     const sources = redditPosts.length > 0
       ? redditPosts
-      : [{ label: "No Reddit discussions found", url: "#", date: new Date().toISOString() }];
+      : [{ 
+          label: "No Reddit discussions found", 
+          url: "#", 
+          date: new Date().toISOString() 
+        }];
 
     // Trust signal meter
     let trustSignal = "🤔 Neutral — no strong community signals found.";
