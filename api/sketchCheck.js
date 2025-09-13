@@ -1,7 +1,7 @@
-const trustedDealers = require("../data/trusted_watch_dealers");
-const scamBlacklist = require("../data/scammer_blacklist");
+import trustedDealers from "../data/trusted_watch_dealers.js";
+import scamBlacklist from "../data/scammer_blacklist.js";
 
-module.exports = (req, res) => {
+export default function handler(req, res) {
   try {
     const { query } = req.query;
 
@@ -69,4 +69,4 @@ module.exports = (req, res) => {
     console.error("Handler error:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
-};
+}
