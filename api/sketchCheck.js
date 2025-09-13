@@ -1,11 +1,10 @@
 import trustedDealers from "./trusted_watch_dealers.js";
 import scamBlacklist from "./scammer_blacklist.js";
-import whois from "whois-json"; // remember: npm install whois-json
+import whois from "whois-json"; // ensure this is in package.json
 
 export default async function handler(req, res) {
   try {
     const { query } = req.query;
-
     if (!query) {
       return res.status(400).json({ error: "Missing query parameter" });
     }
@@ -59,15 +58,14 @@ export default async function handler(req, res) {
 
     // 3. Suspicious fallback → WHOIS + Reddit
     let whoisInfo = null;
-    let domainAgeReason = "ℹ️ Domain age unavailable"; // fallback by default
+    let domainAgeReason = "ℹ️ Domain age unavailable";
 
     try {
-      const whoisData = await whois(q, { timeout: 5000 }); // 5s timeout
+      const whoisData = await whois(q, { timeout: 5000 });
       if (whoisData && whoisData.creationDate) {
         const created = new Date(whoisData.creationDate);
         const now = new Date();
-        const ageMs = now - created;
-        const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
+        const ageDays = Math.floor((now - created) / (1000 * 60 * 60 * 24));
 
         if (ageDays < 90) {
           domainAgeReason = `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`;
@@ -84,7 +82,7 @@ export default async function handler(req, res) {
       console.error("WHOIS lookup failed:", err);
     }
 
-    // Reddit posts
+    // Reddit fetch
     let redditPosts = [];
     try {
       const redditRes = await fetch(
@@ -93,11 +91,7 @@ export default async function handler(req, res) {
       );
       const redditData = await redditRes.json();
 
-      if (
-        redditData &&
-        redditData.data &&
-        Array.isArray(redditData.data.children)
-      ) {
+      if (redditData?.data?.children?.length) {
         redditPosts = redditData.data.children.map((c) => ({
           label: `Reddit: ${c.data.subreddit} — ${c.data.title}`,
           url: `https://reddit.com${c.data.permalink}`,
@@ -108,6 +102,19 @@ export default async function handler(req, res) {
       console.error("Reddit fetch error:", err);
     }
 
+    // Ensure sources never empty
+    const sources = redditPosts.length > 0
+      ? redditPosts
+      : [{ label: "No Reddit discussions found", url: "#", date: new Date().toISOString() }];
+
+    // Trust signal
+    let trustSignal = "🤔 Neutral — no strong community signals found.";
+    if (domainAgeReason?.includes("very recent")) {
+      trustSignal = "🚨 High Risk — brand new domain with no reputation.";
+    } else if (redditPosts.length > 0) {
+      trustSignal = "🟡 Mixed — established domain but community review needed.";
+    }
+
     // Final suspicious verdict
     return res.status(200).json({
       query: q,
@@ -116,9 +123,9 @@ export default async function handler(req, res) {
         "⚠️ Not in trusted dealer index",
         "⚠️ Not flagged in blacklist",
         domainAgeReason,
-        "Further analysis required: pricing anomalies, reputation footprint",
+        trustSignal,
       ],
-      sources: redditPosts,
+      sources,
       whois: whoisInfo,
       lastChecked: new Date().toISOString(),
     });
