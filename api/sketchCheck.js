@@ -1,4 +1,4 @@
-import trustedDealers from "../data/trusted_watch_dealers.js";
+import trustedDealers from "../data/datatrusted_watch_dealers.js";
 import scamBlacklist from "../data/scammer_blacklist.js";
 
 export default function handler(req, res) {
@@ -20,7 +20,7 @@ export default function handler(req, res) {
         query: q,
         verdict: "trusted",
         reasons: [
-          `Listed in trusted_watch_dealers.js as ${trustedHit.name}`,
+          `Listed in datatrusted_watch_dealers.js as ${trustedHit.name}`,
           "Active dealer with long-standing reputation footprint",
         ],
         sources: [
