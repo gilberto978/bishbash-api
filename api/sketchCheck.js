@@ -1,8 +1,5 @@
-import * as dealersFile from "../data/datatrusted_watch_dealers.js";
-import * as blacklistFile from "../data/scammer_blacklist.js";
-
-const trustedDealers = dealersFile.default;   // unwrap array
-const scamBlacklist = blacklistFile.default;  // unwrap array
+import trustedDealers from "./trusted_watch_dealers.js";
+import scamBlacklist from "./scammer_blacklist.js";
 
 export default async function handler(req, res) {
   try {
@@ -15,7 +12,7 @@ export default async function handler(req, res) {
     // Normalize input
     const q = query.toLowerCase().trim().replace(/^www\./, "");
 
-    // Debug
+    // Debug logs (check in Vercel logs)
     console.log("Trusted dealers loaded:", trustedDealers.map(d => d.domain));
     console.log("Query received:", q);
 
@@ -67,7 +64,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. Suspicious fallback → Fetch Reddit posts
+    // 3. Suspicious fallback → Reddit fetch
     let redditPosts = [];
     try {
       const redditRes = await fetch(
