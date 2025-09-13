@@ -12,11 +12,18 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing query parameter" });
     }
 
-    const q = query.toLowerCase().trim();
+    // Normalize input
+    const q = query.toLowerCase().trim().replace(/^www\./, "");
 
-    // 1. Trusted check
+    // Debug logs (check Vercel logs after running a query)
+    console.log("Loaded trusted dealers:", trustedDealers.map(d => d.domain));
+    console.log("Query received:", q);
+
+    // 1. Trusted check (strict after normalization)
     const trustedHit = Array.isArray(trustedDealers)
-      ? trustedDealers.find((d) => q.includes(d.domain.toLowerCase()))
+      ? trustedDealers.find(
+          (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
+        )
       : null;
 
     if (trustedHit) {
@@ -34,9 +41,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. Blacklist check
+    // 2. Blacklist check (same normalization)
     const scamHit = Array.isArray(scamBlacklist)
-      ? scamBlacklist.find((d) => q.includes(d.domain.toLowerCase()))
+      ? scamBlacklist.find(
+          (d) => q === d.domain.toLowerCase().trim().replace(/^www\./, "")
+        )
       : null;
 
     if (scamHit) {
