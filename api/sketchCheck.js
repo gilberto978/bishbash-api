@@ -4,7 +4,7 @@ import * as blacklistFile from "../data/scammer_blacklist.js";
 const trustedDealers = dealersFile.default;
 const scamBlacklist = blacklistFile.default;
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   try {
     const { query } = req.query;
 
@@ -16,7 +16,7 @@ export default function handler(req, res) {
 
     // 1. Trusted check
     const trustedHit = Array.isArray(trustedDealers)
-      ? trustedDealers.find((d) => d.domain.toLowerCase() === q)
+      ? trustedDealers.find((d) => q.includes(d.domain.toLowerCase()))
       : null;
 
     if (trustedHit) {
@@ -24,8 +24,8 @@ export default function handler(req, res) {
         query: q,
         verdict: "trusted",
         reasons: [
-          `Listed in datatrusted_watch_dealers.js as ${trustedHit.name}`,
-          "Active dealer with long-standing reputation footprint",
+          `✅ ${trustedHit.name} is a verified dealer`,
+          trustedHit.info,
         ],
         sources: [
           { label: trustedHit.name, url: `https://${trustedHit.domain}` },
@@ -36,7 +36,7 @@ export default function handler(req, res) {
 
     // 2. Blacklist check
     const scamHit = Array.isArray(scamBlacklist)
-      ? scamBlacklist.find((d) => d.domain.toLowerCase() === q)
+      ? scamBlacklist.find((d) => q.includes(d.domain.toLowerCase()))
       : null;
 
     if (scamHit) {
@@ -44,8 +44,8 @@ export default function handler(req, res) {
         query: q,
         verdict: "scam",
         reasons: [
-          `Blacklisted in ${scamHit.source}`,
-          "Community reports of scam behavior",
+          `🚨 Flagged as scam in ${scamHit.source}`,
+          scamHit.reason,
         ],
         sources: [
           {
@@ -58,16 +58,39 @@ export default function handler(req, res) {
       });
     }
 
-    // 3. Suspicious fallback
+    // 3. Suspicious fallback → Fetch Reddit posts
+    let redditPosts = [];
+    try {
+      const redditRes = await fetch(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=2`,
+        { headers: { "User-Agent": "bishbash-scam-checker" } }
+      );
+      const redditData = await redditRes.json();
+
+      if (
+        redditData &&
+        redditData.data &&
+        Array.isArray(redditData.data.children)
+      ) {
+        redditPosts = redditData.data.children.map((c) => ({
+          label: `Reddit: ${c.data.subreddit} — ${c.data.title}`,
+          url: `https://reddit.com${c.data.permalink}`,
+          date: new Date(c.data.created_utc * 1000).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("Reddit fetch error:", err);
+    }
+
     return res.status(200).json({
       query: q,
       verdict: "suspicious",
       reasons: [
-        "Not found in trusted dealers",
-        "Not listed in blacklist",
-        "Further AI analysis required (domain age, pricing anomalies, reputation footprint)",
+        "⚠️ Not in trusted dealer index",
+        "⚠️ Not flagged in blacklist",
+        "Further analysis required: domain age, pricing anomalies, reputation footprint",
       ],
-      sources: [],
+      sources: redditPosts,
       lastChecked: new Date().toISOString(),
     });
   } catch (err) {
