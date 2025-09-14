@@ -26,14 +26,12 @@ function extractCreationDate(whoisData) {
     whoisData?.registry_data?.created_date,
     whoisData?.registry_data?.creation_date,
   ];
-  // ISO strings
   for (const v of paths) {
     if (typeof v === "string") {
       const d = new Date(v);
       if (!isNaN(d.getTime())) return d;
     }
   }
-  // numeric (epoch seconds or ms)
   for (const v of paths) {
     if (typeof v === "number") {
       const ms = v < 10_000_000_000 ? v * 1000 : v;
@@ -49,12 +47,17 @@ const extractRegistrar = (w) =>
 /** ---------- main handler ---------- */
 export default async function handler(req, res) {
   try {
-    // Health check & fast mode for quick debugging
-    if (req.query.health === "1") {
-      return res.status(200).json({ ok: true, now: new Date().toISOString() });
+    // DEBUG: confirm env var is loaded
+    if (process.env.APILAYER_API_KEY) {
+      console.log(
+        "DEBUG: APILAYER_API_KEY starts with:",
+        process.env.APILAYER_API_KEY.substring(0, 6) + "..."
+      );
+    } else {
+      console.log("DEBUG: APILAYER_API_KEY is missing!");
     }
 
-    const { query, fast } = req.query;
+    const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
     const q = norm(query);
@@ -89,22 +92,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // If fast=1, skip external calls — proves the function returns immediately
-    if (fast === "1") {
-      return res.status(200).json({
-        query: q,
-        verdict: "suspicious",
-        reasons: [
-          "⚠️ Not in trusted dealer index",
-          "⚠️ Not flagged in blacklist",
-          "ℹ️ External checks skipped (fast mode)",
-        ],
-        sources: [{ label: "Fast mode", url: "#", date: new Date().toISOString() }],
-        lastChecked: new Date().toISOString(),
-      });
-    }
-
-    // 3) Suspicious → WHOIS (Apilayer) + Reddit with timeouts
+    // 3) Suspicious → WHOIS (Apilayer)
     let whoisInfo = null;
     let domainAgeReason = "ℹ️ Domain age unavailable";
     const apiKey = process.env.APILAYER_API_KEY;
@@ -139,34 +127,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Reddit (also with timeout)
-    let redditPosts = [];
-    try {
-      const r = await fetchWithTimeout(
-        `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=2`,
-        { timeoutMs: 6000, headers: { "User-Agent": "bishbash-scam-checker" } }
-      );
-      const data = await safeJson(r);
-      if (data?.data?.children?.length) {
-        redditPosts = data.data.children.map((c) => ({
-          label: `Reddit: ${c.data.subreddit} — ${c.data.title}`,
-          url: `https://reddit.com${c.data.permalink}`,
-          date: new Date(c.data.created_utc * 1000).toISOString(),
-        }));
-      }
-    } catch {
-      // ignore; we fallback below
-    }
-
-    const sources = redditPosts.length
-      ? redditPosts
-      : [{ label: "No Reddit discussions found", url: "#", date: new Date().toISOString() }];
-
-    // Simple trust meter
-    let trustSignal = "🤔 Neutral — no strong community signals found.";
-    if (domainAgeReason.includes("very recent")) trustSignal = "🚨 High Risk — brand new domain with no reputation.";
-    else if (redditPosts.length) trustSignal = "🟡 Mixed — established domain but community review needed.";
-
     return res.status(200).json({
       query: q,
       verdict: "suspicious",
@@ -174,9 +134,7 @@ export default async function handler(req, res) {
         "⚠️ Not in trusted dealer index",
         "⚠️ Not flagged in blacklist",
         domainAgeReason,
-        trustSignal,
       ],
-      sources,
       whois: whoisInfo,
       lastChecked: new Date().toISOString(),
     });
