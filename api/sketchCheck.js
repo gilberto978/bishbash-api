@@ -4,7 +4,7 @@ import scamBlacklist from "./scammer_blacklist.js";
 /** ---------- small utils ---------- */
 const norm = (s) => s.toLowerCase().trim().replace(/^www\./, "");
 
-function fetchWithTimeout(url, { timeoutMs = 8000, ...opts } = {}) {
+function fetchWithTimeout(url, { timeoutMs = 15000, ...opts } = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...opts, signal: controller.signal })
@@ -47,16 +47,6 @@ const extractRegistrar = (w) =>
 /** ---------- main handler ---------- */
 export default async function handler(req, res) {
   try {
-    // DEBUG: confirm env var is loaded
-    if (process.env.APILAYER_API_KEY) {
-      console.log(
-        "DEBUG: APILAYER_API_KEY starts with:",
-        process.env.APILAYER_API_KEY.substring(0, 6) + "..."
-      );
-    } else {
-      console.log("DEBUG: APILAYER_API_KEY is missing!");
-    }
-
     const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
@@ -100,30 +90,36 @@ export default async function handler(req, res) {
     if (!apiKey) {
       domainAgeReason = "ℹ️ WHOIS disabled (missing APILAYER_API_KEY)";
     } else {
-      try {
-        const whoisRes = await fetchWithTimeout(
-          `https://api.apilayer.com/whois/query?domain=${encodeURIComponent(q)}`,
-          { timeoutMs: 8000, headers: { apikey: apiKey } }
-        );
-        const whoisData = await safeJson(whoisRes);
-
-        if (whoisRes.ok) {
-          const created = extractCreationDate(whoisData);
-          if (created) {
-            const ageDays = Math.floor((Date.now() - created.getTime()) / (1000 * 60 * 60 * 24));
-            domainAgeReason =
-              ageDays < 90
-                ? `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`
-                : `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
-            whoisInfo = { created: created.toISOString(), registrar: extractRegistrar(whoisData) };
-          } else if (whoisData?.error?.message) {
-            domainAgeReason = `ℹ️ WHOIS unavailable: ${whoisData.error.message}`;
+      let whoisData = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const whoisRes = await fetchWithTimeout(
+            `https://api.apilayer.com/whois/query?domain=${encodeURIComponent(q)}`,
+            { timeoutMs: 15000, headers: { apikey: apiKey } }
+          );
+          if (whoisRes.ok) {
+            whoisData = await safeJson(whoisRes);
+            break;
           }
-        } else {
-          domainAgeReason = `ℹ️ WHOIS unavailable (HTTP ${whoisRes.status})`;
+        } catch (err) {
+          if (attempt === 1) {
+            domainAgeReason = `ℹ️ WHOIS request failed after retries: ${err.message}`;
+          }
         }
-      } catch (err) {
-        domainAgeReason = `ℹ️ WHOIS request failed: ${err.message}`;
+      }
+
+      if (whoisData) {
+        const created = extractCreationDate(whoisData);
+        if (created) {
+          const ageDays = Math.floor((Date.now() - created.getTime()) / (1000 * 60 * 60 * 24));
+          domainAgeReason =
+            ageDays < 90
+              ? `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`
+              : `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
+          whoisInfo = { created: created.toISOString(), registrar: extractRegistrar(whoisData) };
+        } else if (whoisData?.error?.message) {
+          domainAgeReason = `ℹ️ WHOIS unavailable: ${whoisData.error.message}`;
+        }
       }
     }
 
