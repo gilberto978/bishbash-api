@@ -1,14 +1,14 @@
 import trustedDealers from "./trusted_watch_dealers.js";
 import scamBlacklist from "./scammer_blacklist.js";
 
-/** ---------- small utils ---------- */
-const norm = (s) => s.toLowerCase().trim().replace(/^www\./, "");
+/** ---------------- utils ---------------- */
+const norm = (s) => s.toLowerCase().trim().replace(/^https?:\/\//, "").replace(/^www\./, "");
+const onlyHost = (s) => norm(s).split("/")[0];
 
-function fetchWithTimeout(url, { timeoutMs = 15000, ...opts } = {}) {
+function fetchWithTimeout(url, { timeoutMs = 8000, ...opts } = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...opts, signal: controller.signal })
-    .finally(() => clearTimeout(id));
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(id));
 }
 
 async function safeJson(res) {
@@ -16,48 +16,66 @@ async function safeJson(res) {
   catch { return { error: "Invalid JSON from upstream" }; }
 }
 
-function extractCreationDate(whoisData) {
-  if (!whoisData) return null;
-  const paths = [
-    whoisData?.registration?.created,
-    whoisData?.created_date,
-    whoisData?.creation_date,
-    whoisData?.created,
-    whoisData?.registry_data?.created_date,
-    whoisData?.registry_data?.creation_date,
-  ];
-  for (const v of paths) {
-    if (typeof v === "string") {
-      const d = new Date(v);
-      if (!isNaN(d.getTime())) return d;
-    }
-  }
-  for (const v of paths) {
-    if (typeof v === "number") {
-      const ms = v < 10_000_000_000 ? v * 1000 : v;
-      const d = new Date(ms);
-      if (!isNaN(d.getTime())) return d;
-    }
-  }
-  return null;
+function tldOf(host) {
+  const parts = host.split(".");
+  return parts.length > 1 ? parts[parts.length - 1] : "";
 }
-const extractRegistrar = (w) =>
-  w?.registrar?.name || w?.registrar || w?.registry_data?.registrar_name || "Unknown";
 
-/** ---------- main handler ---------- */
+function domainHeuristics(host) {
+  const tld = tldOf(host);
+  const riskyTLDs = new Set(["xyz","top","live","shop","icu","fun","rest","oneg","link","online","work","click","tokyo","study","best","kim","monster","lol"]);
+  const length = host.length;
+  const hyphens = (host.match(/-/g) || []).length;
+  const numbers = (host.match(/[0-9]/g) || []).length;
+  const spammy = /(deal|discount|cheap|replica|sale|outlet|factory|authenticwatch|superclone|clone|wholesale|market|garantee|officialstore|watches?store)/i.test(host);
+
+  const tldRisk = riskyTLDs.has(tld) ? 1 : 0;
+  const longDomain = length >= 22 ? 1 : 0;
+  const manyHyphens = hyphens >= 2 ? 1 : 0;
+  const hasNumbers = numbers >= 2 ? 1 : 0;
+  const spamWord = spammy ? 1 : 0;
+
+  const riskSignals = [
+    tldRisk && `TLD .${tld} is often abused`,
+    longDomain && "Very long domain name",
+    manyHyphens && "Multiple hyphens in domain",
+    hasNumbers && "Numbers present in domain",
+    spamWord && "Spammy sales/replica wording",
+  ].filter(Boolean);
+
+  // Risk score (0–100). Higher = riskier.
+  let risk = 0;
+  risk += tldRisk * 25;
+  risk += longDomain * 15;
+  risk += manyHyphens * 15;
+  risk += hasNumbers * 10;
+  risk += spamWord * 35;
+  risk = Math.min(100, risk);
+
+  return { tld, length, hyphens, numbers, spammy, risk, riskSignals };
+}
+
+function scoreToVerdict(trustScore) {
+  if (trustScore >= 80) return "trusted";
+  if (trustScore >= 50) return "caution";
+  return "suspicious";
+}
+
+/** ---------------- handler ---------------- */
 export default async function handler(req, res) {
   try {
     const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Missing query parameter" });
 
-    const q = norm(query);
+    const host = onlyHost(query);
 
-    // 1) Trusted
-    const trustedHit = trustedDealers.find((d) => q === norm(d.domain));
+    /** 1) Hard signals: trusted & blacklist */
+    const trustedHit = trustedDealers.find((d) => onlyHost(d.domain) === host);
     if (trustedHit) {
       return res.status(200).json({
-        query: q,
+        query: host,
         verdict: "trusted",
+        trustScore: 95,
         reasons: [
           `✅ ${trustedHit.name} is a verified dealer`,
           trustedHit.info,
@@ -67,14 +85,14 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2) Blacklist
-    const scamHit = scamBlacklist.find((d) => q === norm(d.domain));
+    const scamHit = scamBlacklist.find((d) => onlyHost(d.domain) === host);
     if (scamHit) {
       return res.status(200).json({
-        query: q,
+        query: host,
         verdict: "scam",
+        trustScore: 5,
         reasons: [
-          `🚨 Flagged as scam in ${scamHit.source}`,
+          `🚨 Listed on ${scamHit.source}`,
           scamHit.reason,
         ],
         sources: [{ label: scamHit.source, url: scamHit.url || "#", date: scamHit.date }],
@@ -82,56 +100,59 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3) Suspicious → WHOIS (Apilayer)
-    let whoisInfo = null;
-    let domainAgeReason = "ℹ️ Domain age unavailable";
-    const apiKey = process.env.APILAYER_API_KEY;
+    /** 2) Domain heuristics (no external deps) */
+    const heur = domainHeuristics(host);
 
-    if (!apiKey) {
-      domainAgeReason = "ℹ️ WHOIS disabled (missing APILAYER_API_KEY)";
-    } else {
-      let whoisData = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const whoisRes = await fetchWithTimeout(
-            `https://api.apilayer.com/whois/query?domain=${encodeURIComponent(q)}`,
-            { timeoutMs: 15000, headers: { apikey: apiKey } }
-          );
-          if (whoisRes.ok) {
-            whoisData = await safeJson(whoisRes);
-            break;
-          }
-        } catch (err) {
-          if (attempt === 1) {
-            domainAgeReason = `ℹ️ WHOIS request failed after retries: ${err.message}`;
-          }
-        }
+    /** 3) Reddit chatter (timeout + fallback) */
+    let redditPosts = [];
+    try {
+      const r = await fetchWithTimeout(
+        `https://www.reddit.com/search.json?q=${encodeURIComponent(host)}&limit=3`,
+        { timeoutMs: 6000, headers: { "User-Agent": "bishbash-scam-checker" } }
+      );
+      const data = await safeJson(r);
+      if (data?.data?.children?.length) {
+        redditPosts = data.data.children.map((c) => ({
+          label: `Reddit: ${c.data.subreddit} — ${c.data.title}`,
+          url: `https://reddit.com${c.data.permalink}`,
+          date: new Date(c.data.created_utc * 1000).toISOString(),
+        }));
       }
+    } catch { /* ignore */ }
 
-      if (whoisData) {
-        const created = extractCreationDate(whoisData);
-        if (created) {
-          const ageDays = Math.floor((Date.now() - created.getTime()) / (1000 * 60 * 60 * 24));
-          domainAgeReason =
-            ageDays < 90
-              ? `⚠️ Domain registered ${ageDays} days ago — very recent (possible throwaway scam site).`
-              : `ℹ️ Domain registered ${created.getFullYear()} (${ageDays} days old).`;
-          whoisInfo = { created: created.toISOString(), registrar: extractRegistrar(whoisData) };
-        } else if (whoisData?.error?.message) {
-          domainAgeReason = `ℹ️ WHOIS unavailable: ${whoisData.error.message}`;
-        }
-      }
-    }
+    const sources = redditPosts.length
+      ? redditPosts
+      : [{ label: "No Reddit discussions found", url: "#", date: new Date().toISOString() }];
+
+    /** 4) Trust score (start from 60, subtract heuristics risk) */
+    let trustScore = Math.max(5, Math.min(95, 60 - Math.round(heur.risk * 0.6)));
+    // If there IS Reddit chatter with obvious negatives, nudge down a bit (light heuristic)
+    const negHit = redditPosts.find(p => /scam|avoid|fake|fraud|ripoff/i.test(p.label));
+    if (negHit) trustScore = Math.max(5, trustScore - 15);
+
+    const verdict = scoreToVerdict(trustScore);
+
+    /** 5) Reasons (succinct) */
+    const reasons = [];
+    reasons.push("⚠️ Not in trusted dealer index");
+    reasons.push("⚠️ Not flagged in blacklist");
+    if (heur.riskSignals.length) reasons.push(...heur.riskSignals.map(s => `⚠️ ${s}`));
+    if (redditPosts.length) reasons.push("ℹ️ Community chatter found on Reddit");
+    else reasons.push("ℹ️ No community reports found");
 
     return res.status(200).json({
-      query: q,
-      verdict: "suspicious",
-      reasons: [
-        "⚠️ Not in trusted dealer index",
-        "⚠️ Not flagged in blacklist",
-        domainAgeReason,
-      ],
-      whois: whoisInfo,
+      query: host,
+      verdict,
+      trustScore,
+      reasons,
+      signals: {
+        tld: heur.tld,
+        domainLength: heur.length,
+        hyphens: heur.hyphens,
+        numbers: heur.numbers,
+        spammyWordsDetected: heur.spammy,
+      },
+      sources,
       lastChecked: new Date().toISOString(),
     });
   } catch (err) {
